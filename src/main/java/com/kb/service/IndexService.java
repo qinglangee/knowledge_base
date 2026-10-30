@@ -63,8 +63,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class IndexService {
 
-    /** 全局共享的中文分词器（线程安全） */
-    public static final Analyzer ANALYZER = new SmartChineseAnalyzer();
+    /** 回退用的默认中文分词器（SmartChinese，线程安全） */
+    private static final Analyzer FALLBACK_ANALYZER = new SmartChineseAnalyzer();
 
     private static final Logger log = LoggerFactory.getLogger(IndexService.class);
     private static final long MAX_FILE_BYTES = 20L * 1024 * 1024;
@@ -86,6 +86,8 @@ public class IndexService {
     private final Map<String, IndexWriter> writers = new ConcurrentHashMap<>();
     /** 扫描进度：目录 id -> [已处理数, 总数]，仅在扫描/对账进行期间存在 */
     private final Map<Long, long[]> progress = new ConcurrentHashMap<>();
+    private volatile Analyzer currentAnalyzer;
+    private volatile String analyzerName;
 
     public IndexService(DbLibraryRepository libRepo,
                         IndexedDirectoryRepository dirRepo,
@@ -102,6 +104,37 @@ public class IndexService {
      */
     public long[] progressOf(Long directoryId) {
         return progress.get(directoryId);
+    }
+
+    /**
+     * 按设置返回当前分词器（带缓存，设置变更后自动切换）。
+     */
+    public Analyzer analyzer() {
+        String name = settingService.analyzerName();
+        if (currentAnalyzer == null || !name.equals(analyzerName)) {
+            synchronized (this) {
+                if (currentAnalyzer == null || !name.equals(analyzerName)) {
+                    currentAnalyzer = createAnalyzer(name);
+                    analyzerName = name;
+                }
+            }
+        }
+        return currentAnalyzer;
+    }
+
+    /**
+     * 创建分词器：IK 通过反射加载（依赖不可用时自动回退 SmartChinese）。
+     */
+    private static Analyzer createAnalyzer(String name) {
+        if ("ik".equalsIgnoreCase(name)) {
+            try {
+                return (Analyzer) Class.forName("org.wltea.analyzer.lucene.IKAnalyzer")
+                        .getConstructor(boolean.class).newInstance(true);
+            } catch (Throwable t) {
+                log.warn("IK 分词器加载失败，回退 SmartChinese: {}", t.toString());
+            }
+        }
+        return FALLBACK_ANALYZER;
     }
 
     /**
@@ -428,15 +461,23 @@ public class IndexService {
         }
     }
 
-    @PreDestroy
-    public void shutdown() {
+    /**
+     * 关闭并清空全部索引写入器（换索引根目录/切换分词器时调用）。
+     */
+    public void closeWriters() {
         writers.values().forEach(w -> {
             try {
                 w.close();
-            } catch (IOException ignored) {
+            } catch (IOException e) {
+                log.warn("关闭索引写入器失败: {}", e.getMessage());
             }
         });
         writers.clear();
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        closeWriters();
     }
 
     private IndexWriter writerFor(Path dir) {
@@ -445,7 +486,7 @@ public class IndexService {
             return writers.computeIfAbsent(key, k -> {
                 try {
                     Files.createDirectories(dir);
-                    IndexWriterConfig cfg = new IndexWriterConfig(ANALYZER);
+                    IndexWriterConfig cfg = new IndexWriterConfig(analyzer());
                     cfg.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
                     return new IndexWriter(FSDirectory.open(dir), cfg);
                 } catch (IOException e) {

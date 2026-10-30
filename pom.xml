@@ -78,6 +78,19 @@
             <version>${lucene.version}</version>
         </dependency>
 
+        <!-- IK 中文分词（无官方 Lucene 9 版本，使用 8.5.0 并排除其旧版 Lucene 依赖，运行时反射加载、失败自动回退） -->
+        <dependency>
+            <groupId>com.github.magese</groupId>
+            <artifactId>ik-analyzer</artifactId>
+            <version>8.5.0</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.apache.lucene</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
         <!-- Tika 内容抽取 -->
         <dependency>
             <groupId>org.apache.tika</groupId>

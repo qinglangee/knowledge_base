@@ -27,6 +27,14 @@
             <button type="submit" class="primary">搜索</button>
         </form>
 
+        <div class="search-filters">
+            <input id="search-ext" type="text" placeholder="文件类型，如 pdf,docx（留空不限）">
+            <span class="filter-label">修改时间</span>
+            <input id="search-from" type="date" title="修改时间从">
+            <span class="filter-sep">至</span>
+            <input id="search-to" type="date" title="修改时间至">
+        </div>
+
         <div id="search-status" class="muted" hidden></div>
 
         <div id="search-results" class="result-list"></div>
@@ -69,8 +77,19 @@
             <h2>系统设置</h2>
             <form id="settings-form">
                 <label for="settings-index-root">索引存储位置</label>
-                <input id="settings-index-root" type="text" placeholder="留空使用默认位置（./data/index）">
-                <p class="hint">修改后新索引会写到新位置；已有库的索引路径记录在创建时，建议在初始使用前设置。</p>
+                <input id="settings-index-root" type="text" placeholder="留空使用默认位置（./data/indexes）">
+                <p class="hint">修改后要求新目录为空（不存在会自动创建），已有索引数据会自动迁移到新位置。</p>
+
+                <label for="settings-port">服务端口（1-65535）</label>
+                <input id="settings-port" type="number" min="1" max="65535" placeholder="留空表示不修改">
+                <p class="hint" id="settings-port-hint"></p>
+
+                <label for="settings-analyzer">中文分词器</label>
+                <select id="settings-analyzer">
+                    <option value="smartcn">SmartChinese（Lucene 自带）</option>
+                    <option value="ik">IK 中文分词</option>
+                </select>
+                <p class="hint">切换分词器后建议对相关库执行「重建索引」，以保证搜索效果一致。</p>
 
                 <label for="settings-page-size">每页显示结果数量（1-100）</label>
                 <input id="settings-page-size" type="number" min="1" max="100" placeholder="20">

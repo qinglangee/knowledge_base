@@ -24,13 +24,19 @@ public class SearchController {
      * @param lib  索引库 id；不传表示在所有库中查询
      * @param page 页码，从 0 开始
      * @param size 每页数量，不传使用设置中的默认值
+     * @param ext  扩展名过滤，如 "pdf,docx"，可选
+     * @param from 修改时间下限 yyyy-MM-dd，可选
+     * @param to   修改时间上限 yyyy-MM-dd，可选
      */
     @GetMapping("/api/search")
     public ApiResponse<SearchResponse> search(@RequestParam String q,
                                               @RequestParam(required = false) Long lib,
                                               @RequestParam(required = false) Integer page,
-                                              @RequestParam(required = false) Integer size) {
-        SearchResponse resp = searchService.search(q, lib, page, size);
+                                              @RequestParam(required = false) Integer size,
+                                              @RequestParam(required = false) String ext,
+                                              @RequestParam(required = false) String from,
+                                              @RequestParam(required = false) String to) {
+        SearchResponse resp = searchService.search(q, lib, page, size, ext, from, to);
         if (lib != null) {
             settingService.saveLastLibrary(lib);
         }

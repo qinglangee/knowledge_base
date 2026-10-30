@@ -32,10 +32,12 @@ public final class Dtos {
     public record SearchResponse(long total, int page, int size, long tookMs, List<SearchItem> items) {
     }
 
-    public record SettingsDTO(String indexRoot, int pageSize, Long lastLibraryId) {
+    public record SettingsDTO(String indexRoot, int pageSize, Long lastLibraryId,
+                              Integer port, int runningPort, String analyzer) {
     }
 
-    public record SettingsUpdateRequest(String indexRoot, Integer pageSize, Long lastLibraryId) {
+    public record SettingsUpdateRequest(String indexRoot, Integer pageSize, Long lastLibraryId,
+                                        Integer port, String analyzer) {
     }
 
     public record TextPreviewDTO(String type, String mimeType, String fileName, long size, String content,

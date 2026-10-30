@@ -2,7 +2,10 @@ server:
   address: 127.0.0.1
   port: 8080
 
+# 允许通过 data/app.properties 覆盖配置（如 server.port），优先级高于本文件
 spring:
+  config:
+    import: optional:file:./data/app.properties
   application:
     name: knowledge-base
   datasource:

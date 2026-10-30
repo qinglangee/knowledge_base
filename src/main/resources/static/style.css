@@ -317,6 +317,23 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 
 .dir-form input { flex: 1; }
 
+/* 搜索过滤行 */
+.search-filters {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+
+.search-filters input[type="text"] { flex: 1; min-width: 200px; }
+.search-filters input[type="date"] { width: 150px; }
+.search-filters .filter-label, .search-filters .filter-sep {
+    color: var(--muted);
+    font-size: 13px;
+    white-space: nowrap;
+}
+
 /* 扫描错误列表 */
 .err-list {
     padding: 8px 12px;

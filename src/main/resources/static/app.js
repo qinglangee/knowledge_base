@@ -118,8 +118,14 @@ async function doSearch(page) {
 
     try {
         const libParam = lib ? `&lib=${encodeURIComponent(lib)}` : '';
+        const ext = $('search-ext').value.trim();
+        const from = $('search-from').value;
+        const to = $('search-to').value;
+        const filters = (ext ? `&ext=${encodeURIComponent(ext)}` : '')
+            + (from ? `&from=${from}` : '')
+            + (to ? `&to=${to}` : '');
         const data = await api(
-            `/api/search?q=${encodeURIComponent(q)}&page=${page}&size=${size}${libParam}`);
+            `/api/search?q=${encodeURIComponent(q)}&page=${page}&size=${size}${libParam}${filters}`);
         renderResults(data);
     } catch (e) {
         statusEl.textContent = '搜索失败：' + e.message;
@@ -437,6 +443,10 @@ async function refreshSettings() {
         state.settings = s;
         $('settings-index-root').value = s.indexRoot || '';
         $('settings-page-size').value = s.pageSize;
+        $('settings-port').value = s.port != null ? String(s.port) : '';
+        $('settings-port-hint').textContent =
+            `当前服务运行在 http://127.0.0.1:${s.runningPort}${s.port != null && s.port !== s.runningPort ? '，保存的端口 ' + s.port + ' 将在重启后生效' : ''}`;
+        $('settings-analyzer').value = s.analyzer || 'smartcn';
         $('settings-last-library').innerHTML =
             '<option value="">（不修改）</option>' +
             state.libraries.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('');
@@ -461,16 +471,27 @@ $('settings-form').addEventListener('submit', async e => {
         setMsg('每页数量需在 1-100 之间', 'err');
         return;
     }
+    const portRaw = $('settings-port').value.trim();
+    let port = null;
+    if (portRaw) {
+        port = parseInt(portRaw, 10);
+        if (isNaN(port) || port < 1 || port > 65535) {
+            setMsg('端口需在 1-65535 之间', 'err');
+            return;
+        }
+    }
     const payload = {
         indexRoot: $('settings-index-root').value.trim() || null,
         pageSize,
         lastLibraryId: $('settings-last-library').value || null,
+        port,
+        analyzer: $('settings-analyzer').value,
     };
     try {
         const s = await apiJson('/api/settings', 'PUT', payload);
         state.settings = s;
         setMsg('已保存', 'ok');
-        toast('设置已保存');
+        toast(port != null && port !== s.runningPort ? '设置已保存，端口将在重启服务后生效' : '设置已保存');
     } catch (err) {
         setMsg(err.message, 'err');
     }
