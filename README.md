@@ -14,6 +14,8 @@ mvn -DskipTests clean package
 java -jar target/knowledge-base-0.1.0.jar
 ```
 
+Windows 下也可在任意目录直接运行项目根目录的 `start.bat` 启动。
+
 浏览器访问 http://127.0.0.1:8080
 
 ## 使用说明
