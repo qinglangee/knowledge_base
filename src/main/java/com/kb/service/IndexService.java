@@ -2,8 +2,10 @@ package com.kb.service;
 
 import com.kb.entity.DbLibrary;
 import com.kb.entity.IndexedDirectory;
+import com.kb.entity.ScanError;
 import com.kb.repository.DbLibraryRepository;
 import com.kb.repository.IndexedDirectoryRepository;
+import com.kb.repository.ScanErrorRepository;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.cn.smart.SmartChineseAnalyzer;
 import org.apache.lucene.document.Document;
@@ -12,9 +14,15 @@ import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.metadata.TikaCoreProperties;
@@ -41,6 +49,8 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Map;
@@ -71,15 +81,27 @@ public class IndexService {
     private final DbLibraryRepository libRepo;
     private final IndexedDirectoryRepository dirRepo;
     private final SettingService settingService;
+    private final ScanErrorRepository scanErrorRepo;
     private final AutoDetectParser parser = new AutoDetectParser();
     private final Map<String, IndexWriter> writers = new ConcurrentHashMap<>();
+    /** 扫描进度：目录 id -> [已处理数, 总数]，仅在扫描/对账进行期间存在 */
+    private final Map<Long, long[]> progress = new ConcurrentHashMap<>();
 
     public IndexService(DbLibraryRepository libRepo,
                         IndexedDirectoryRepository dirRepo,
-                        SettingService settingService) {
+                        SettingService settingService,
+                        ScanErrorRepository scanErrorRepo) {
         this.libRepo = libRepo;
         this.dirRepo = dirRepo;
         this.settingService = settingService;
+        this.scanErrorRepo = scanErrorRepo;
+    }
+
+    /**
+     * 查询某目录当前的扫描进度，未在扫描时返回 null。
+     */
+    public long[] progressOf(Long directoryId) {
+        return progress.get(directoryId);
     }
 
     /**
@@ -91,6 +113,7 @@ public class IndexService {
 
     /**
      * 异步扫描指定目录：先清除该目录旧文档，再遍历重建。
+     * 第一遍统计可索引文件总数用于进度展示，第二遍执行索引。
      */
     @Async("scanExecutor")
     public void scanDirectoryAsync(Long directoryId) {
@@ -104,12 +127,14 @@ public class IndexService {
         }
         dir.setStatus(IndexedDirectory.STATUS_SCANNING);
         dirRepo.save(dir);
+        scanErrorRepo.deleteAll(scanErrorRepo.findByDirectoryId(directoryId));
         Counter counter = new Counter();
         try {
             Path root = Paths.get(dir.getPath()).toAbsolutePath().normalize();
             String rootNorm = root.toString();
             IndexWriter writer = writerFor(resolveLibIndexDir(lib));
             writer.deleteDocuments(new Term("rootPath", rootNorm));
+            progress.put(directoryId, new long[]{0, countIndexable(root)});
             Files.walkFileTree(root, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attrs) {
@@ -128,13 +153,17 @@ public class IndexService {
                         counter.ok++;
                     } catch (Exception e) {
                         counter.fail++;
+                        recordError(directoryId, file, e.getMessage());
                         log.warn("索引文件失败: {} - {}", file, e.getMessage());
                     }
+                    progress.computeIfPresent(directoryId, (k, v) -> new long[]{v[0] + 1, v[1]});
                     return FileVisitResult.CONTINUE;
                 }
 
                 @Override
                 public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                    counter.fail++;
+                    recordError(directoryId, file, exc.getMessage());
                     return FileVisitResult.CONTINUE;
                 }
             });
@@ -144,10 +173,216 @@ public class IndexService {
             log.error("扫描目录失败: {}", dir.getPath(), e);
             dir.setStatus(IndexedDirectory.STATUS_FAILED);
         } finally {
+            progress.remove(directoryId);
             dir.setFileCount(counter.ok);
             dir.setScannedAt(LocalDateTime.now());
             dirRepo.save(dir);
             log.info("目录扫描完成: {} 成功 {} 失败 {}", dir.getPath(), counter.ok, counter.fail);
+        }
+    }
+
+    /**
+     * 异步增量对账：比对磁盘文件与索引中已记录的 mtime/size，
+     * 仅重新索引有变化的文件，并删除磁盘上已消失文件的文档。
+     * 用于启动补漏和监听事件溢出时的兜底。
+     */
+    @Async("scanExecutor")
+    public void reconcileDirectoryAsync(Long directoryId) {
+        IndexedDirectory dir = dirRepo.findById(directoryId).orElse(null);
+        if (dir == null) {
+            return;
+        }
+        DbLibrary lib = libRepo.findById(dir.getLibraryId()).orElse(null);
+        if (lib == null) {
+            return;
+        }
+        Path root = Paths.get(dir.getPath()).toAbsolutePath().normalize();
+        String rootNorm = root.toString();
+        if (!Files.isDirectory(root)) {
+            recordError(directoryId, root, "目录不存在或不可访问");
+            dir.setStatus(IndexedDirectory.STATUS_FAILED);
+            dirRepo.save(dir);
+            return;
+        }
+        dir.setStatus(IndexedDirectory.STATUS_SCANNING);
+        dirRepo.save(dir);
+        scanErrorRepo.deleteAll(scanErrorRepo.findByDirectoryId(directoryId));
+        Counter counter = new Counter();
+        try {
+            IndexWriter writer = writerFor(resolveLibIndexDir(lib));
+            // 读取索引中该目录已有文档的 path -> [mtime, size]
+            Map<String, long[]> existing = loadIndexedFiles(resolveLibIndexDir(lib), rootNorm);
+            progress.put(directoryId, new long[]{0, countIndexable(root)});
+            Set<String> seen = new HashSet<>();
+            Files.walkFileTree(root, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attrs) {
+                    return d.getFileName().toString().startsWith(".")
+                            ? FileVisitResult.SKIP_SUBTREE
+                            : FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (!indexable(file, attrs)) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    seen.add(file.toString());
+                    long[] old = existing.get(file.toString());
+                    if (old != null
+                            && old[0] == attrs.lastModifiedTime().toMillis()
+                            && old[1] == attrs.size()) {
+                        counter.ok++;
+                    } else {
+                        try {
+                            indexFile(writer, lib, rootNorm, file, attrs);
+                            counter.ok++;
+                        } catch (Exception e) {
+                            counter.fail++;
+                            recordError(directoryId, file, e.getMessage());
+                            log.warn("增量索引文件失败: {} - {}", file, e.getMessage());
+                        }
+                    }
+                    progress.computeIfPresent(directoryId, (k, v) -> new long[]{v[0] + 1, v[1]});
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                    counter.fail++;
+                    recordError(directoryId, file, exc.getMessage());
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            // 删除磁盘上已消失的文件的文档
+            for (String p : existing.keySet()) {
+                if (!seen.contains(p)) {
+                    writer.deleteDocuments(new Term("path", p));
+                }
+            }
+            writer.commit();
+            dir.setStatus(IndexedDirectory.STATUS_DONE);
+        } catch (Exception e) {
+            log.error("增量对账失败: {}", dir.getPath(), e);
+            dir.setStatus(IndexedDirectory.STATUS_FAILED);
+        } finally {
+            progress.remove(directoryId);
+            dir.setFileCount(counter.ok);
+            dir.setScannedAt(LocalDateTime.now());
+            dirRepo.save(dir);
+            log.info("增量对账完成: {} 有效 {}", dir.getPath(), counter.ok);
+        }
+    }
+
+    /**
+     * 单文件增量更新（由文件监听触发，同步执行）：
+     * 新增/修改则重新索引，删除或不再是可索引文件则从索引中移除。
+     */
+    public void updateSingleFile(Long directoryId, String filePath) {
+        IndexedDirectory dir = dirRepo.findById(directoryId).orElse(null);
+        if (dir == null) {
+            return;
+        }
+        DbLibrary lib = libRepo.findById(dir.getLibraryId()).orElse(null);
+        if (lib == null) {
+            return;
+        }
+        try {
+            Path p = Paths.get(filePath).toAbsolutePath().normalize();
+            IndexWriter writer = writerFor(resolveLibIndexDir(lib));
+            BasicFileAttributes attrs = null;
+            try {
+                attrs = Files.readAttributes(p, BasicFileAttributes.class);
+            } catch (IOException ignored) {
+                // 文件不存在，走删除分支
+            }
+            if (attrs == null || !indexable(p, attrs)) {
+                writer.deleteDocuments(new Term("path", p.toString()));
+                writer.commit();
+                return;
+            }
+            indexFile(writer, lib, dir.getPath(), p, attrs);
+            writer.commit();
+        } catch (Exception e) {
+            log.warn("增量更新文件失败: {} - {}", filePath, e.getMessage());
+            recordError(directoryId, Paths.get(filePath), e.getMessage());
+        }
+    }
+
+    /**
+     * 从索引中读出属于指定根目录的全部文档的 path/mtime/size。
+     */
+    private Map<String, long[]> loadIndexedFiles(Path libIndexDir, String rootNorm) {
+        Map<String, long[]> result = new HashMap<>();
+        if (!Files.exists(libIndexDir)) {
+            return result;
+        }
+        try (DirectoryReader reader = DirectoryReader.open(FSDirectory.open(libIndexDir))) {
+            IndexSearcher searcher = new IndexSearcher(reader);
+            StoredFields storedFields = searcher.storedFields();
+            TopDocs hits = searcher.search(
+                    new TermQuery(new Term("rootPath", rootNorm)), Integer.MAX_VALUE);
+            for (ScoreDoc sd : hits.scoreDocs) {
+                Document d = storedFields.document(sd.doc, Set.of("path", "mtime", "size"));
+                String path = d.get("path");
+                if (path == null) {
+                    continue;
+                }
+                Number mtime = d.getField("mtime") != null ? d.getField("mtime").numericValue() : null;
+                Number size = d.getField("size") != null ? d.getField("size").numericValue() : null;
+                if (mtime != null && size != null) {
+                    result.put(path, new long[]{mtime.longValue(), size.longValue()});
+                }
+            }
+        } catch (Exception e) {
+            log.warn("读取已有索引失败，将全量重建: {}", e.getMessage());
+            result.clear();
+        }
+        return result;
+    }
+
+    /**
+     * 统计某目录下可索引文件总数（跳过点开头目录）。
+     */
+    private long countIndexable(Path root) throws IOException {
+        long[] total = {0};
+        Files.walkFileTree(root, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attrs) {
+                return d.getFileName().toString().startsWith(".")
+                        ? FileVisitResult.SKIP_SUBTREE
+                        : FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                if (indexable(file, attrs)) {
+                    total[0]++;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return total[0];
+    }
+
+    /**
+     * 记录无法处理的文件错误（损坏、权限等），失败不影响主流程。
+     */
+    private void recordError(Long directoryId, Path file, String msg) {
+        try {
+            ScanError se = new ScanError();
+            se.setDirectoryId(directoryId);
+            se.setPath(truncate(file.toString(), 500));
+            se.setError(truncate(msg == null ? "未知错误" : msg, 1000));
+            se.setCreatedAt(LocalDateTime.now());
+            scanErrorRepo.save(se);
+        } catch (Exception e) {
+            log.debug("记录扫描错误失败: {}", e.getMessage());
         }
     }
 

@@ -62,4 +62,10 @@ public class LibraryController {
         service.rescanLibrary(id);
         return ApiResponse.ok();
     }
+
+    @PostMapping("/{id}/rebuild")
+    public ApiResponse<Void> rebuild(@PathVariable Long id) {
+        service.rebuildLibrary(id);
+        return ApiResponse.ok();
+    }
 }

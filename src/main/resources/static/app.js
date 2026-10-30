@@ -7,6 +7,7 @@ const state = {
     settings: null,
     search: { q: '', lib: '', page: 0, size: 20 },
     dirPollTimer: null,
+    expandedErrors: new Set(),
 };
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico']);
@@ -267,18 +268,30 @@ function renderLibraryCard(lib, dirs) {
             <span class="lib-actions">
                 <button data-act="rename">重命名</button>
                 <button data-act="rescan">重扫全库</button>
+                <button data-act="rebuild">重建索引</button>
                 <button data-act="delete" class="danger">删除库</button>
             </span>
         </div>
         <ul class="dir-list">
-            ${dirs.map(d => `
+            ${dirs.map(d => {
+                const scanning = d.status === 'SCANNING' && d.progressTotal != null;
+                const countText = scanning
+                    ? `扫描中 ${d.progressDone ?? 0}/${d.progressTotal}`
+                    : `${d.fileCount} 个文件 · ${fmtTime(d.scannedAt)}`;
+                const expanded = state.expandedErrors.has(String(d.id));
+                const errBtn = d.errorCount > 0 || expanded
+                    ? `<button data-act="dir-errors" data-id="${d.id}" class="${expanded ? 'active' : ''}">错误(${d.errorCount || 0})</button>`
+                    : '';
+                return `
                 <li>
                     <span class="dir-path">${esc(d.path)}</span>
                     <span class="status status-${esc(d.status)}">${esc(d.status)}</span>
-                    <span class="muted">${d.fileCount} 个文件 · ${fmtTime(d.scannedAt)}</span>
+                    <span class="muted">${countText}</span>
+                    ${errBtn}
                     <button data-act="dir-rescan" data-id="${d.id}">重扫</button>
                     <button data-act="dir-delete" data-id="${d.id}" class="danger">移除</button>
-                </li>`).join('') || '<li class="muted">尚未添加目录</li>'}
+                </li>`;
+            }).join('') || '<li class="muted">尚未添加目录</li>'}
         </ul>
         <form class="dir-form">
             <input type="text" placeholder="添加要索引的目录绝对路径，如 D:\\docs" required>
@@ -300,6 +313,15 @@ function renderLibraryCard(lib, dirs) {
         try {
             await api(`/api/libraries/${lib.id}/rescan`, { method: 'POST' });
             toast('已开始重扫全库');
+            await refreshLibraries();
+        } catch (err) { toast(err.message, true); }
+    });
+
+    card.querySelector('[data-act="rebuild"]').addEventListener('click', async () => {
+        if (!confirm(`确定重建库「${lib.name}」的索引？将删除现有索引并全量重扫所有目录。`)) return;
+        try {
+            await api(`/api/libraries/${lib.id}/rebuild`, { method: 'POST' });
+            toast('已开始重建索引');
             await refreshLibraries();
         } catch (err) { toast(err.message, true); }
     });
@@ -333,6 +355,17 @@ function renderLibraryCard(lib, dirs) {
             } catch (err) { toast(err.message, true); }
         }));
 
+    card.querySelectorAll('[data-act="dir-errors"]').forEach(btn =>
+        btn.addEventListener('click', () => toggleErrors(btn)));
+
+    /* 轮询刷新后恢复展开的错误面板 */
+    dirs.forEach(d => {
+        if (state.expandedErrors.has(String(d.id))) {
+            const btn = card.querySelector(`button[data-act="dir-errors"][data-id="${d.id}"]`);
+            if (btn) toggleErrors(btn);
+        }
+    });
+
     /* 添加目录 */
     card.querySelector('.dir-form').addEventListener('submit', async e => {
         e.preventDefault();
@@ -350,6 +383,38 @@ function renderLibraryCard(lib, dirs) {
     });
 
     return card;
+}
+
+/* 展开/收起某目录的扫描错误列表 */
+async function toggleErrors(btn) {
+    const dirId = btn.dataset.id;
+    const li = btn.closest('li');
+    if (state.expandedErrors.has(dirId)) {
+        state.expandedErrors.delete(dirId);
+        btn.classList.remove('active');
+        const panel = li.nextElementSibling;
+        if (panel && panel.classList.contains('err-list')) panel.remove();
+        return;
+    }
+    state.expandedErrors.add(dirId);
+    btn.classList.add('active');
+    const panel = document.createElement('div');
+    panel.className = 'err-list';
+    panel.innerHTML = '<div class="muted">加载中…</div>';
+    li.after(panel);
+    try {
+        const errors = await api(`/api/dirs/${dirId}/errors`);
+        panel.innerHTML = errors.length
+            ? errors.map(e => `
+                <div class="err-item">
+                    <div class="err-path">${esc(e.path)}</div>
+                    <div class="err-msg">${esc(e.error || '未知错误')}</div>
+                    <div class="err-time">${fmtTime(e.createdAt)}</div>
+                </div>`).join('')
+            : '<div class="muted">没有错误记录。</div>';
+    } catch (err) {
+        panel.innerHTML = `<div class="muted">加载失败：${esc(err.message)}</div>`;
+    }
 }
 
 /* 扫描状态轮询：存在 PENDING/SCANNING 目录时每 2 秒刷新一次 */

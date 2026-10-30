@@ -3,10 +3,12 @@ package com.kb.service;
 import com.kb.common.BusinessException;
 import com.kb.dto.Dtos.DirectoryDTO;
 import com.kb.dto.Dtos.LibraryDTO;
+import com.kb.dto.Dtos.ScanErrorDTO;
 import com.kb.entity.DbLibrary;
 import com.kb.entity.IndexedDirectory;
 import com.kb.repository.DbLibraryRepository;
 import com.kb.repository.IndexedDirectoryRepository;
+import com.kb.repository.ScanErrorRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -31,15 +33,21 @@ public class LibraryService {
     private final IndexedDirectoryRepository dirRepo;
     private final IndexService indexService;
     private final SettingService settingService;
+    private final ScanErrorRepository scanErrorRepo;
+    private final FileWatcherService fileWatcher;
 
     public LibraryService(DbLibraryRepository libRepo,
                           IndexedDirectoryRepository dirRepo,
                           IndexService indexService,
-                          SettingService settingService) {
+                          SettingService settingService,
+                          ScanErrorRepository scanErrorRepo,
+                          FileWatcherService fileWatcher) {
         this.libRepo = libRepo;
         this.dirRepo = dirRepo;
         this.indexService = indexService;
         this.settingService = settingService;
+        this.scanErrorRepo = scanErrorRepo;
+        this.fileWatcher = fileWatcher;
     }
 
     @Transactional
@@ -133,6 +141,7 @@ public class LibraryService {
         dir.setPath(p.toString());
         dir.setStatus(IndexedDirectory.STATUS_PENDING);
         dir = dirRepo.save(dir);
+        fileWatcher.register(dir.getId(), p);
         indexService.scanDirectoryAsync(dir.getId());
         return toDTO(dir);
     }
@@ -145,6 +154,8 @@ public class LibraryService {
             indexService.deleteDirectoryDocs(lib, dir.getPath());
         }
         dirRepo.delete(dir);
+        fileWatcher.unregister(Paths.get(dir.getPath()));
+        scanErrorRepo.deleteAll(scanErrorRepo.findByDirectoryId(dirId));
     }
 
     public void rescanDirectory(Long dirId) {
@@ -157,12 +168,45 @@ public class LibraryService {
         dirRepo.findByLibraryIdOrderById(libraryId).forEach(d -> indexService.scanDirectoryAsync(d.getId()));
     }
 
+    /**
+     * 重建某个库的全部索引：清空索引文件并逐目录全量重扫。
+     */
+    public void rebuildLibrary(Long libraryId) {
+        DbLibrary lib = libRepo.findById(libraryId)
+                .orElseThrow(() -> new BusinessException(404, "索引库不存在"));
+        List<IndexedDirectory> dirs = dirRepo.findByLibraryIdOrderById(libraryId);
+        boolean scanning = dirs.stream()
+                .anyMatch(d -> IndexedDirectory.STATUS_SCANNING.equals(d.getStatus()));
+        if (scanning) {
+            throw new BusinessException("有目录正在扫描，请稍后再试");
+        }
+        for (IndexedDirectory d : dirs) {
+            scanErrorRepo.deleteAll(scanErrorRepo.findByDirectoryId(d.getId()));
+            d.setStatus(IndexedDirectory.STATUS_PENDING);
+            dirRepo.save(d);
+        }
+        indexService.dropLibraryIndex(lib);
+        dirs.forEach(d -> indexService.scanDirectoryAsync(d.getId()));
+        log.info("开始重建索引库: {} ({})", lib.getName(), lib.getId());
+    }
+
+    public List<ScanErrorDTO> listErrors(Long dirId) {
+        dirRepo.findById(dirId).orElseThrow(() -> new BusinessException(404, "目录不存在"));
+        return scanErrorRepo.findByDirectoryIdOrderByIdAsc(dirId).stream()
+                .map(e -> new ScanErrorDTO(e.getId(), e.getPath(), e.getError(), e.getCreatedAt()))
+                .toList();
+    }
+
     private LibraryDTO toDTO(DbLibrary lib, int dirCount) {
         return new LibraryDTO(lib.getId(), lib.getName(), lib.getIndexRelativePath(), lib.getCreatedAt(), dirCount);
     }
 
     private DirectoryDTO toDTO(IndexedDirectory dir) {
+        long[] prog = indexService.progressOf(dir.getId());
         return new DirectoryDTO(dir.getId(), dir.getLibraryId(), dir.getPath(), dir.getStatus(),
-                dir.getFileCount(), dir.getScannedAt());
+                dir.getFileCount(), dir.getScannedAt(),
+                prog != null ? (int) prog[0] : null,
+                prog != null ? (int) prog[1] : null,
+                (int) scanErrorRepo.countByDirectoryId(dir.getId()));
     }
 }

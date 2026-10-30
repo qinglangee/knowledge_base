@@ -317,6 +317,26 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 
 .dir-form input { flex: 1; }
 
+/* 扫描错误列表 */
+.err-list {
+    padding: 8px 12px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    margin: 4px 0;
+    font-size: 12px;
+}
+
+.err-list .err-item { padding: 6px 0; }
+.err-list .err-item + .err-item { border-top: 1px dashed var(--border); }
+.err-list .err-path { font-family: Consolas, monospace; word-break: break-all; }
+.err-list .err-msg { color: var(--danger); word-break: break-all; margin: 2px 0; }
+.err-list .err-time { color: var(--muted); font-size: 11px; }
+
+button.active {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
 /* ---------- 设置 ---------- */
 #settings-form label {
     display: block;

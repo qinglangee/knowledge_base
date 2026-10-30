@@ -18,7 +18,11 @@ public final class Dtos {
     }
 
     public record DirectoryDTO(Long id, Long libraryId, String path, String status, int fileCount,
-                               LocalDateTime scannedAt) {
+                               LocalDateTime scannedAt, Integer progressDone, Integer progressTotal,
+                               int errorCount) {
+    }
+
+    public record ScanErrorDTO(Long id, String path, String error, LocalDateTime createdAt) {
     }
 
     public record SearchItem(String name, String path, String ext, long size, long mtime, float score,
