@@ -1,0 +1,37 @@
+# ---- Build output (Maven / Gradle) ----
+target/
+build/
+out/
+*.class
+
+# ---- IDE ----
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+
+# ---- Logs ----
+logs/
+*.log
+
+# ---- Runtime data: Lucene indexes & H2 database ----
+data/
+*.mv.db
+*.trace.db
+
+# ---- OS generated files ----
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ---- Misc ----
+*.tmp
+*.bak
+
+# ---- custom ----
+prompt/answer/
