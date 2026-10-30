@@ -2,10 +2,93 @@
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
-    <title>Knowledge Base</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Knowledge Base - 本地文件内容搜索</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<h1>Knowledge Base API</h1>
-<p>后端服务运行中，Web 界面将在阶段 2 提供。</p>
+<header class="topbar">
+    <div class="brand">📚 Knowledge Base</div>
+    <nav class="nav">
+        <button id="nav-search" class="nav-btn active" data-view="search">搜索</button>
+        <button id="nav-libraries" class="nav-btn" data-view="libraries">库管理</button>
+        <button id="nav-settings" class="nav-btn" data-view="settings">设置</button>
+    </nav>
+</header>
+
+<main>
+    <!-- ============ 搜索视图 ============ -->
+    <section id="view-search" class="view">
+        <form id="search-form" class="search-bar">
+            <input id="search-input" type="text" placeholder="输入关键词，搜索文件内容…" autocomplete="off" autofocus>
+            <select id="search-lib" title="选择要搜索的库">
+                <option value="">所有库</option>
+            </select>
+            <button type="submit" class="primary">搜索</button>
+        </form>
+
+        <div id="search-status" class="muted" hidden></div>
+
+        <div id="search-results" class="result-list"></div>
+
+        <div id="pagination" class="pagination" hidden>
+            <button id="page-prev">上一页</button>
+            <span id="page-info"></span>
+            <button id="page-next">下一页</button>
+        </div>
+    </section>
+
+    <!-- ============ 预览视图（覆盖层） ============ -->
+    <div id="preview-overlay" class="overlay" hidden>
+        <div class="preview-panel">
+            <div class="preview-head">
+                <span id="preview-title"></span>
+                <button id="preview-close" title="关闭">✕</button>
+            </div>
+            <div id="preview-body" class="preview-body"></div>
+        </div>
+    </div>
+
+    <!-- ============ 库管理视图 ============ -->
+    <section id="view-libraries" class="view" hidden>
+        <div class="panel">
+            <div class="panel-head">
+                <h2>库列表</h2>
+                <form id="lib-create-form" class="inline-form">
+                    <input id="lib-create-name" type="text" placeholder="新库名称…" required>
+                    <button type="submit" class="primary">新建库</button>
+                </form>
+            </div>
+            <div id="library-list" class="library-list"></div>
+        </div>
+    </section>
+
+    <!-- ============ 设置视图 ============ -->
+    <section id="view-settings" class="view" hidden>
+        <div class="panel narrow">
+            <h2>系统设置</h2>
+            <form id="settings-form">
+                <label for="settings-index-root">索引存储位置</label>
+                <input id="settings-index-root" type="text" placeholder="留空使用默认位置（./data/index）">
+                <p class="hint">修改后新索引会写到新位置；已有库的索引路径记录在创建时，建议在初始使用前设置。</p>
+
+                <label for="settings-page-size">每页显示结果数量（1-100）</label>
+                <input id="settings-page-size" type="number" min="1" max="100" placeholder="20">
+
+                <label for="settings-last-library">上次使用的库</label>
+                <select id="settings-last-library">
+                    <option value="">（不记录）</option>
+                </select>
+
+                <button type="submit" class="primary">保存设置</button>
+                <span id="settings-msg" class="msg"></span>
+            </form>
+        </div>
+    </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
 </body>
 </html>
