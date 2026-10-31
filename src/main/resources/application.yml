@@ -17,6 +17,12 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
+  # 本地工具：禁用静态资源浏览器缓存，避免改完前端后浏览器仍用旧版
+  web:
+    resources:
+      cache:
+        cachecontrol:
+          no-store: true
 
 logging:
   level:

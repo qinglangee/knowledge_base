@@ -198,6 +198,8 @@ function openPreview(item) {
         img.src = rawUrl;
         img.alt = item.name;
         body.appendChild(img);
+    } else if (ext === 'md' || ext === 'markdown') {
+        openMarkdownPreview(item, body);
     } else {
         api('/api/file/text?path=' + encodeURIComponent(item.path)).then(t => {
             body.innerHTML = '';
@@ -214,6 +216,75 @@ function openPreview(item) {
             body.innerHTML = `<div class="preview-note">预览失败：${esc(err.message)}</div>`;
         });
     }
+}
+
+/* Markdown 预览：支持「渲染 / 源码」切换，渲染模式用 marked + highlight.js */
+function openMarkdownPreview(item, body) {
+    let rawText = '';
+    let truncated = false;
+    let mode = 'rendered'; // 'rendered' | 'source'
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'preview-toolbar';
+    const btnRendered = document.createElement('button');
+    btnRendered.className = 'tb-btn active';
+    btnRendered.type = 'button';
+    btnRendered.textContent = '渲染';
+    const btnSource = document.createElement('button');
+    btnSource.className = 'tb-btn';
+    btnSource.type = 'button';
+    btnSource.textContent = '源码';
+    toolbar.append(btnRendered, btnSource);
+
+    function render() {
+        body.innerHTML = '';
+        body.appendChild(toolbar);
+        if (truncated) {
+            const note = document.createElement('div');
+            note.className = 'preview-note';
+            note.textContent = '内容过长，仅显示前一部分。';
+            body.appendChild(note);
+        }
+        if (mode === 'rendered') {
+            const div = document.createElement('div');
+            div.className = 'md-body';
+            div.innerHTML = marked.parse(rawText || '');
+            div.querySelectorAll('pre code').forEach(block => {
+                try { hljs.highlightElement(block); } catch (e) { /* ignore */ }
+            });
+            body.appendChild(div);
+        } else {
+            const pre = document.createElement('pre');
+            pre.className = 'md-source';
+            const code = document.createElement('code');
+            code.className = 'language-markdown';
+            code.textContent = rawText || '';
+            pre.appendChild(code);
+            try { hljs.highlightElement(code); } catch (e) { /* ignore */ }
+            body.appendChild(pre);
+        }
+    }
+
+    btnRendered.addEventListener('click', () => {
+        mode = 'rendered';
+        btnRendered.classList.add('active');
+        btnSource.classList.remove('active');
+        render();
+    });
+    btnSource.addEventListener('click', () => {
+        mode = 'source';
+        btnSource.classList.add('active');
+        btnRendered.classList.remove('active');
+        render();
+    });
+
+    api('/api/file/text?path=' + encodeURIComponent(item.path)).then(t => {
+        rawText = t.content || '';
+        truncated = !!t.truncated;
+        render();
+    }).catch(err => {
+        body.innerHTML = `<div class="preview-note">预览失败：${esc(err.message)}</div>`;
+    });
 }
 
 $('preview-close').addEventListener('click', () => {
