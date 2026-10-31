@@ -303,6 +303,7 @@ function highlightInElement(root, keywords) {
 
 /**
  * 构建匹配位置导航条：上一个 / 下一个按钮 + 以匹配内容为文字的按钮，点击滚动到对应命中处。
+ * 匹配内容区域可拖动调整高度（超出时滚动），整块可折叠。
  */
 function buildMatchNav(count, scrollContainer) {
     if (count <= 0) return null;
@@ -311,10 +312,13 @@ function buildMatchNav(count, scrollContainer) {
     const nav = document.createElement('div');
     nav.className = 'match-nav';
 
+    const head = document.createElement('div');
+    head.className = 'match-nav-head';
+
     const label = document.createElement('span');
     label.className = 'match-count';
     label.textContent = `匹配 ${count} 处`;
-    nav.appendChild(label);
+    head.appendChild(label);
 
     const btnPrev = document.createElement('button');
     btnPrev.className = 'match-btn match-nav-btn';
@@ -330,7 +334,24 @@ function buildMatchNav(count, scrollContainer) {
     btnNext.addEventListener('click', () =>
         goTo(currentIdx < 0 ? 0 : (currentIdx + 1) % count));
 
-    nav.append(btnPrev, btnNext);
+    head.append(btnPrev, btnNext);
+
+    // 折叠 / 展开
+    const btnCollapse = document.createElement('button');
+    btnCollapse.className = 'match-btn match-collapse-btn';
+    btnCollapse.type = 'button';
+    btnCollapse.textContent = '▾ 折叠';
+    btnCollapse.title = '折叠匹配内容区域';
+    btnCollapse.addEventListener('click', () => {
+        const collapsed = nav.classList.toggle('collapsed');
+        btnCollapse.textContent = collapsed ? '▸ 展开' : '▾ 折叠';
+        btnCollapse.title = collapsed ? '展开匹配内容区域' : '折叠匹配内容区域';
+    });
+    head.appendChild(btnCollapse);
+
+    // 匹配内容按钮区（可滚动）
+    const chips = document.createElement('div');
+    chips.className = 'match-nav-chips';
 
     // 以每个命中的实际文本作为按钮文字（截断显示，完整内容放 tooltip）
     const hits = scrollContainer.querySelectorAll('mark.hit');
@@ -343,8 +364,36 @@ function buildMatchNav(count, scrollContainer) {
         btn.title = full;
         btn.textContent = shown.length > 24 ? shown.slice(0, 24) + '…' : shown;
         btn.addEventListener('click', () => goTo(i));
-        nav.appendChild(btn);
+        chips.appendChild(btn);
     });
+
+    // 底部拖拽把手：调整匹配内容区域高度
+    const resizer = document.createElement('div');
+    resizer.className = 'match-nav-resizer';
+    resizer.title = '拖动调整匹配区域高度';
+    resizer.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        const startY = e.clientY;
+        const startH = Math.max(chips.offsetHeight, 26);
+        const maxH = Math.max(26, scrollContainer.clientHeight - head.offsetHeight - 30);
+        chips.style.height = startH + 'px';
+        chips.style.maxHeight = 'none';
+        document.body.style.userSelect = 'none';
+
+        function onMove(ev) {
+            const h = Math.min(maxH, Math.max(26, startH + ev.clientY - startY));
+            chips.style.height = h + 'px';
+        }
+        function onUp() {
+            document.body.style.userSelect = '';
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+        }
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+    });
+
+    nav.append(head, chips, resizer);
 
     function goTo(i) {
         currentIdx = i;
@@ -442,8 +491,65 @@ $('preview-close').addEventListener('click', () => {
 });
 
 $('preview-overlay').addEventListener('click', e => {
+    if (previewDragging) return;
     if (e.target === $('preview-overlay')) $('preview-close').click();
 });
+
+/* ---------- 预览面板拖拽调整大小 ---------- */
+let previewDragging = false;
+
+(function initPreviewResize() {
+    const panel = document.querySelector('.preview-panel');
+    if (!panel) return;
+
+    const MIN_W = 360;
+    const MIN_H = 260;
+    const EDGE = 24; // overlay 内边距，需与 .overlay padding 保持一致
+
+    function startDrag(e, dirs) {
+        e.preventDefault();
+        const rect = panel.getBoundingClientRect();
+        panel.style.width = rect.width + 'px';
+        panel.style.height = rect.height + 'px';
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startW = rect.width;
+        const startH = rect.height;
+        const maxW = Math.max(MIN_W, window.innerWidth - EDGE * 2);
+        const maxH = Math.max(MIN_H, window.innerHeight - EDGE * 2);
+        previewDragging = true;
+        document.body.style.userSelect = 'none';
+
+        function onMove(ev) {
+            if (dirs.x) {
+                panel.style.width =
+                    Math.min(maxW, Math.max(MIN_W, startW + ev.clientX - startX)) + 'px';
+            }
+            if (dirs.y) {
+                panel.style.height =
+                    Math.min(maxH, Math.max(MIN_H, startH + ev.clientY - startY)) + 'px';
+            }
+        }
+
+        function onUp() {
+            document.body.style.userSelect = '';
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            // 延后解除拖拽标记，避免松开时被误判为点击遮罩而关闭预览
+            setTimeout(() => { previewDragging = false; }, 0);
+        }
+
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+    }
+
+    panel.querySelectorAll('.preview-resize').forEach(handle => {
+        handle.addEventListener('pointerdown', e => {
+            const dir = handle.dataset.dir || '';
+            startDrag(e, { x: dir.includes('e'), y: dir.includes('s') });
+        });
+    });
+})();
 
 document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !$('preview-overlay').hidden) $('preview-close').click();

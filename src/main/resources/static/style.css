@@ -218,6 +218,7 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 }
 
 .preview-panel {
+    position: relative;
     background: var(--panel);
     border-radius: var(--radius);
     width: min(900px, 100%);
@@ -226,6 +227,51 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
     flex-direction: column;
     overflow: hidden;
 }
+
+/* 预览面板拖拽调整大小的把手 */
+.preview-resize {
+    position: absolute;
+    z-index: 5;
+}
+
+.preview-resize-e {
+    top: 52px;
+    right: 0;
+    bottom: 14px;
+    width: 6px;
+    cursor: ew-resize;
+}
+
+.preview-resize-s {
+    left: 0;
+    right: 14px;
+    bottom: 0;
+    height: 6px;
+    cursor: ns-resize;
+}
+
+.preview-resize-se {
+    right: 0;
+    bottom: 0;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+}
+
+.preview-resize-se::after {
+    content: "";
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    border-radius: 0 0 2px 0;
+    opacity: .45;
+}
+
+.preview-resize-se:hover::after { opacity: 1; }
 
 .preview-head {
     display: flex;
@@ -279,16 +325,62 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 
 .match-nav {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+    flex-direction: column;
     gap: 6px;
-    padding: 10px 16px;
+    padding: 8px 16px 10px;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
     position: sticky;
     top: 0;
     z-index: 2;
 }
+
+.match-nav-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+/* 可滚动的匹配内容按钮区 */
+.match-nav-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 6px;
+    min-height: 26px;
+    max-height: calc(45vh - 52px);
+    overflow-y: auto;
+    padding-right: 8px;
+}
+
+.match-nav.collapsed .match-nav-chips,
+.match-nav.collapsed .match-nav-resizer {
+    display: none;
+}
+
+/* 匹配区域底部拖拽把手 */
+.match-nav-resizer {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: ns-resize;
+}
+
+.match-nav-resizer::after {
+    content: "";
+    width: 36px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border);
+}
+
+.match-nav-resizer:hover::after { background: var(--muted); }
 
 .match-nav .match-count {
     font-size: 13px;
