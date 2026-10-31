@@ -162,7 +162,7 @@ function renderResults(data) {
     container.querySelectorAll('.result-item').forEach(el =>
         el.addEventListener('click', () => {
             const item = items.find(i => i.path === el.dataset.path);
-            if (item) openPreview(item);
+            if (item) openPreview(item, state.search.q);
         }));
 
     /* 分页 */
@@ -177,7 +177,7 @@ $('page-prev').addEventListener('click', () => doSearch(state.search.page - 1));
 $('page-next').addEventListener('click', () => doSearch(state.search.page + 1));
 
 /* ---------- 文件预览 ---------- */
-function openPreview(item) {
+function openPreview(item, keyword) {
     const overlay = $('preview-overlay');
     const body = $('preview-body');
     $('preview-title').textContent = item.name;
@@ -186,6 +186,7 @@ function openPreview(item) {
 
     const ext = (item.ext || '').toLowerCase();
     const rawUrl = '/api/file/raw?path=' + encodeURIComponent(item.path);
+    const kw = (keyword || '').trim();
 
     if (ext === 'pdf') {
         body.innerHTML = '';
@@ -199,7 +200,7 @@ function openPreview(item) {
         img.alt = item.name;
         body.appendChild(img);
     } else if (ext === 'md' || ext === 'markdown') {
-        openMarkdownPreview(item, body);
+        openMarkdownPreview(item, body, kw);
     } else {
         api('/api/file/text?path=' + encodeURIComponent(item.path)).then(t => {
             body.innerHTML = '';
@@ -209,20 +210,107 @@ function openPreview(item) {
                 note.textContent = '内容过长，仅显示前一部分。';
                 body.appendChild(note);
             }
+            const text = t.content || '（空文件或无法抽取内容）';
+            const result = highlightText(text, kw);
             const pre = document.createElement('pre');
-            pre.textContent = t.content || '（空文件或无法抽取内容）';
+            pre.innerHTML = result.html;
             body.appendChild(pre);
+            const nav = buildMatchNav(result.count, pre);
+            if (nav) body.insertBefore(nav, pre);
         }).catch(err => {
             body.innerHTML = `<div class="preview-note">预览失败：${esc(err.message)}</div>`;
         });
     }
 }
 
+/* 转义正则特殊字符 */
+function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * 对纯文本做 HTML 转义 + 关键词高亮，返回 {html, count}。
+ */
+function highlightText(text, keyword) {
+    const escaped = esc(text);
+    if (!keyword) return { html: escaped, count: 0 };
+    const re = new RegExp(escapeRegExp(keyword), 'gi');
+    let count = 0;
+    const html = escaped.replace(re, m =>
+        `<mark class="hit" data-idx="${count++}">${esc(m)}</mark>`);
+    return { html, count };
+}
+
+/**
+ * 对已渲染的 DOM 元素内的文本节点做关键词高亮（不破坏 HTML 标签），返回命中数。
+ */
+function highlightInElement(root, keyword) {
+    if (!keyword) return 0;
+    const re = new RegExp(escapeRegExp(keyword), 'gi');
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    const nodes = [];
+    let n;
+    while ((n = walker.nextNode())) nodes.push(n);
+    let count = 0;
+    nodes.forEach(node => {
+        if (!node.nodeValue || !re.test(node.nodeValue)) return;
+        re.lastIndex = 0;
+        const frag = document.createDocumentFragment();
+        let last = 0;
+        let m;
+        while ((m = re.exec(node.nodeValue)) !== null) {
+            if (m.index > last) {
+                frag.appendChild(document.createTextNode(node.nodeValue.slice(last, m.index)));
+            }
+            const mark = document.createElement('mark');
+            mark.className = 'hit';
+            mark.dataset.idx = String(count++);
+            mark.textContent = m[0];
+            frag.appendChild(mark);
+            last = m.index + m[0].length;
+        }
+        if (last < node.nodeValue.length) {
+            frag.appendChild(document.createTextNode(node.nodeValue.slice(last)));
+        }
+        node.parentNode.replaceChild(frag, node);
+    });
+    return count;
+}
+
+/**
+ * 构建匹配位置导航条，点击按钮滚动到对应命中处。
+ */
+function buildMatchNav(count, scrollContainer) {
+    if (count <= 0) return null;
+    const nav = document.createElement('div');
+    nav.className = 'match-nav';
+    const label = document.createElement('span');
+    label.className = 'match-count';
+    label.textContent = `匹配 ${count} 处`;
+    nav.appendChild(label);
+    for (let i = 0; i < count; i++) {
+        const btn = document.createElement('button');
+        btn.className = 'match-btn';
+        btn.type = 'button';
+        btn.textContent = String(i + 1);
+        btn.addEventListener('click', () => {
+            const target = scrollContainer.querySelector(`mark.hit[data-idx="${i}"]`);
+            if (!target) return;
+            scrollContainer.querySelectorAll('mark.hit').forEach(m => m.classList.remove('current'));
+            target.classList.add('current');
+            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+        nav.appendChild(btn);
+    }
+    return nav;
+}
+
 /* Markdown 预览：支持「渲染 / 源码」切换，渲染模式用 marked + highlight.js */
-function openMarkdownPreview(item, body) {
+function openMarkdownPreview(item, body, keyword) {
     let rawText = '';
     let truncated = false;
     let mode = 'rendered'; // 'rendered' | 'source'
+    const kw = (keyword || '').trim();
 
     const toolbar = document.createElement('div');
     toolbar.className = 'preview-toolbar';
@@ -245,6 +333,7 @@ function openMarkdownPreview(item, body) {
             note.textContent = '内容过长，仅显示前一部分。';
             body.appendChild(note);
         }
+        let contentEl;
         if (mode === 'rendered') {
             const div = document.createElement('div');
             div.className = 'md-body';
@@ -253,6 +342,7 @@ function openMarkdownPreview(item, body) {
                 try { hljs.highlightElement(block); } catch (e) { /* ignore */ }
             });
             body.appendChild(div);
+            contentEl = div;
         } else {
             const pre = document.createElement('pre');
             pre.className = 'md-source';
@@ -262,6 +352,13 @@ function openMarkdownPreview(item, body) {
             pre.appendChild(code);
             try { hljs.highlightElement(code); } catch (e) { /* ignore */ }
             body.appendChild(pre);
+            contentEl = pre;
+        }
+        // 关键词高亮 + 匹配位置导航
+        const count = highlightInElement(contentEl, kw);
+        const nav = buildMatchNav(count, body);
+        if (nav) {
+            body.insertBefore(nav, contentEl);
         }
     }
 
@@ -518,6 +615,7 @@ async function refreshSettings() {
         $('settings-port-hint').textContent =
             `当前服务运行在 http://127.0.0.1:${s.runningPort}${s.port != null && s.port !== s.runningPort ? '，保存的端口 ' + s.port + ' 将在重启后生效' : ''}`;
         $('settings-analyzer').value = s.analyzer || 'smartcn';
+        $('settings-supported-exts').value = s.supportedExts || '';
         $('settings-last-library').innerHTML =
             '<option value="">（不修改）</option>' +
             state.libraries.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('');
@@ -557,6 +655,7 @@ $('settings-form').addEventListener('submit', async e => {
         lastLibraryId: $('settings-last-library').value || null,
         port,
         analyzer: $('settings-analyzer').value,
+        supportedExts: $('settings-supported-exts').value.trim(),
     };
     try {
         const s = await apiJson('/api/settings', 'PUT', payload);

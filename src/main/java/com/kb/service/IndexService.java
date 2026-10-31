@@ -71,13 +71,6 @@ public class IndexService {
     private static final long MAX_UNKNOWN_TEXT_BYTES = 1024 * 1024;
     private static final int MAX_INDEX_CHARS = 2_000_000;
 
-    /** 参与内容索引的扩展名白名单 */
-    private static final Set<String> SUPPORTED_EXTS = Set.of(
-            "txt", "md", "markdown", "html", "htm", "xml", "json", "yaml", "yml", "csv", "tsv", "log",
-            "java", "py", "js", "ts", "jsx", "tsx", "css", "scss", "sql", "sh", "bat", "ps1",
-            "properties", "conf", "ini", "cfg", "rst", "adoc",
-            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "rtf", "odt", "ods", "odp", "epub");
-
     private final DbLibraryRepository libRepo;
     private final IndexedDirectoryRepository dirRepo;
     private final SettingService settingService;
@@ -507,7 +500,7 @@ public class IndexService {
             // 无扩展名的小文件按文本尝试
             return attrs.size() <= MAX_UNKNOWN_TEXT_BYTES;
         }
-        return SUPPORTED_EXTS.contains(ext);
+        return settingService.supportedExts().contains(ext);
     }
 
     private void indexFile(IndexWriter writer, DbLibrary lib, String rootNorm, Path file,

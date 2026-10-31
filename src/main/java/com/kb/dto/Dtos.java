@@ -33,11 +33,11 @@ public final class Dtos {
     }
 
     public record SettingsDTO(String indexRoot, int pageSize, Long lastLibraryId,
-                              Integer port, int runningPort, String analyzer) {
+                              Integer port, int runningPort, String analyzer, String supportedExts) {
     }
 
     public record SettingsUpdateRequest(String indexRoot, Integer pageSize, Long lastLibraryId,
-                                        Integer port, String analyzer) {
+                                        Integer port, String analyzer, String supportedExts) {
     }
 
     public record TextPreviewDTO(String type, String mimeType, String fileName, long size, String content,

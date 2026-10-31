@@ -93,6 +93,11 @@
                 </select>
                 <p class="hint">切换分词器后建议对相关库执行「重建索引」，以保证搜索效果一致。</p>
 
+                <label for="settings-supported-exts">可索引的文件类型</label>
+                <textarea id="settings-supported-exts" rows="4"
+                    placeholder="用逗号分隔，如 txt,md,pdf,docx"></textarea>
+                <p class="hint">只有这些扩展名的文件会被建入索引。修改后对<strong>之后的新建/重建索引</strong>生效，已有索引不变。支持中英文逗号、分号、空格分隔，扩展名前的点会被自动忽略。</p>
+
                 <label for="settings-page-size">每页显示结果数量（1-100）</label>
                 <input id="settings-page-size" type="number" min="1" max="100" placeholder="20">
 

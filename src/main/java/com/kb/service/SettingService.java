@@ -20,9 +20,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Service
@@ -32,10 +34,17 @@ public class SettingService {
     public static final String KEY_PAGE_SIZE = "page.size";
     public static final String KEY_LAST_LIBRARY_ID = "last.library.id";
     public static final String KEY_ANALYZER = "analyzer";
+    public static final String KEY_SUPPORTED_EXTS = "supported.exts";
 
     public static final String DEFAULT_INDEX_ROOT = "data/indexes";
     public static final int DEFAULT_PAGE_SIZE = 20;
     public static final String DEFAULT_ANALYZER = "smartcn";
+    /** 默认参与内容索引的扩展名白名单（逗号分隔） */
+    public static final String DEFAULT_SUPPORTED_EXTS = String.join(",",
+            "txt", "md", "markdown", "html", "htm", "xml", "json", "yaml", "yml", "csv", "tsv", "log",
+            "java", "py", "js", "ts", "jsx", "tsx", "css", "scss", "sql", "sh", "bat", "ps1",
+            "properties", "conf", "ini", "cfg", "rst", "adoc", "org",
+            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "rtf", "odt", "ods", "odp", "epub");
     /** 应用级配置文件（server.port 等），优先级高于 application.yml */
     public static final Path APP_CONFIG_FILE = Paths.get("data", "app.properties");
 
@@ -45,6 +54,8 @@ public class SettingService {
     private final IndexService indexService;
     /** 当前实际运行端口（启动时解析） */
     private final int runningPort;
+    /** 支持的扩展名缓存，避免每次索引文件都查库 */
+    private volatile Set<String> supportedExtsCache;
 
     public SettingService(AppSettingRepository repo,
                           @Lazy IndexService indexService,
@@ -58,6 +69,7 @@ public class SettingService {
     void init() {
         getOrDefault(KEY_INDEX_ROOT, DEFAULT_INDEX_ROOT);
         getOrDefault(KEY_PAGE_SIZE, String.valueOf(DEFAULT_PAGE_SIZE));
+        supportedExtsCache = parseExts(getOrDefault(KEY_SUPPORTED_EXTS, DEFAULT_SUPPORTED_EXTS));
         try {
             Files.createDirectories(indexRootPath());
         } catch (IOException e) {
@@ -100,6 +112,33 @@ public class SettingService {
 
     public String analyzerName() {
         return getOrDefault(KEY_ANALYZER, DEFAULT_ANALYZER);
+    }
+
+    /**
+     * 当前生效的可索引扩展名集合（全小写、无点）。修改设置后即时生效。
+     */
+    public Set<String> supportedExts() {
+        Set<String> c = supportedExtsCache;
+        return c != null ? c : parseExts(DEFAULT_SUPPORTED_EXTS);
+    }
+
+    /**
+     * 当前支持的扩展名，逗号分隔字符串（用于设置页回显）。
+     */
+    public String supportedExtsText() {
+        return String.join(",", supportedExts());
+    }
+
+    private static Set<String> parseExts(String s) {
+        if (s == null || s.isBlank()) {
+            return Set.of();
+        }
+        return Arrays.stream(s.split("[,，;；\\s]+"))
+                .map(String::trim)
+                .filter(e -> !e.isEmpty())
+                .map(e -> e.startsWith(".") ? e.substring(1).toLowerCase(Locale.ROOT)
+                        : e.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toSet());
     }
 
     public int runningPort() {
@@ -161,6 +200,15 @@ public class SettingService {
                 indexService.closeWriters();
             }
         }
+        if (req.supportedExts() != null) {
+            Set<String> exts = parseExts(req.supportedExts());
+            if (exts.isEmpty()) {
+                throw new BusinessException("支持的文件类型不能为空");
+            }
+            save(KEY_SUPPORTED_EXTS, String.join(",", exts));
+            supportedExtsCache = Set.copyOf(exts);
+            log.info("可索引文件类型已更新: {}", exts);
+        }
     }
 
     public void saveLastLibrary(Long libraryId) {
@@ -173,7 +221,7 @@ public class SettingService {
 
     public SettingsDTO asDTO() {
         return new SettingsDTO(getOrDefault(KEY_INDEX_ROOT, DEFAULT_INDEX_ROOT), pageSize(),
-                lastLibraryId(), configuredPort(), runningPort, analyzerName());
+                lastLibraryId(), configuredPort(), runningPort, analyzerName(), supportedExtsText());
     }
 
     private void save(String key, String value) {
