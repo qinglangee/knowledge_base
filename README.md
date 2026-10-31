@@ -9,12 +9,14 @@
 
 ## 编译运行
 
+构建（Maven 未加 PATH 时用本机实际路径，下面已写好）：
+
 ```bash
 mvn -DskipTests clean package
 java -jar target/knowledge-base-0.1.0.jar
 ```
 
-Windows 下也可在任意目录直接运行项目根目录的 `start.bat` 启动。
+或者直接双击 `build.bat` 构建，再运行 `start.bat` 启动（`start.bat` 可在任意目录运行）。
 
 浏览器访问 http://127.0.0.1:8080
 
