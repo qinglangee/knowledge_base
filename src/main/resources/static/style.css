@@ -314,6 +314,21 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
     color: #16a34a;
 }
 
+.match-nav .match-nav-btn {
+    padding: 0 12px;
+    font-weight: 600;
+}
+
+.match-nav .match-content-btn {
+    min-width: auto;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+}
+
 
 /* ---------- Markdown 预览 ---------- */
 .preview-toolbar {

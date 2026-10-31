@@ -21,4 +21,4 @@ if not exist "%JAR%" (
 title Knowledge Base
 echo Starting Knowledge Base. Default URL: http://127.0.0.1:8080 (port can be changed in Settings page). Press Ctrl+C to stop.
 java -jar "%JAR%"
-pause
+

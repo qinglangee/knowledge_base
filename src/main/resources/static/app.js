@@ -187,6 +187,14 @@ function openPreview(item, keyword) {
     const ext = (item.ext || '').toLowerCase();
     const rawUrl = '/api/file/raw?path=' + encodeURIComponent(item.path);
     const kw = (keyword || '').trim();
+    // 匹配关键词 = 搜索词 + 搜索结果 snippet 中实际高亮的词（避免分词后原文无完整匹配导致无命中）
+    const matchWords = [];
+    const seen = new Set();
+    if (kw) { seen.add(kw.toLowerCase()); matchWords.push(kw); }
+    extractHighlightedTerms(item.snippet).forEach(t => {
+        const k = t.toLowerCase();
+        if (!seen.has(k)) { seen.add(k); matchWords.push(t); }
+    });
 
     if (ext === 'pdf') {
         body.innerHTML = '';
@@ -200,7 +208,7 @@ function openPreview(item, keyword) {
         img.alt = item.name;
         body.appendChild(img);
     } else if (ext === 'md' || ext === 'markdown') {
-        openMarkdownPreview(item, body, kw);
+        openMarkdownPreview(item, body, matchWords);
     } else {
         api('/api/file/text?path=' + encodeURIComponent(item.path)).then(t => {
             body.innerHTML = '';
@@ -211,7 +219,7 @@ function openPreview(item, keyword) {
                 body.appendChild(note);
             }
             const text = t.content || '（空文件或无法抽取内容）';
-            const result = highlightText(text, kw);
+            const result = highlightText(text, matchWords);
             const pre = document.createElement('pre');
             pre.innerHTML = result.html;
             body.appendChild(pre);
@@ -223,18 +231,33 @@ function openPreview(item, keyword) {
     }
 }
 
+/** 从搜索结果 snippet 中提取所有被 <em> 高亮的词 */
+function extractHighlightedTerms(snippet) {
+    if (!snippet) return [];
+    const terms = [];
+    const re = /<em>([\s\S]*?)<\/em>/g;
+    let m;
+    while ((m = re.exec(snippet)) !== null) {
+        const t = m[1].trim();
+        if (t) terms.push(t);
+    }
+    return terms;
+}
+
 /* 转义正则特殊字符 */
 function escapeRegExp(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
- * 对纯文本做 HTML 转义 + 关键词高亮，返回 {html, count}。
+ * 对纯文本做 HTML 转义 + 多关键词高亮，返回 {html, count}。
+ * keywords 为非空字符串数组。
  */
-function highlightText(text, keyword) {
+function highlightText(text, keywords) {
     const escaped = esc(text);
-    if (!keyword) return { html: escaped, count: 0 };
-    const re = new RegExp(escapeRegExp(keyword), 'gi');
+    const words = (keywords || []).filter(Boolean);
+    if (words.length === 0) return { html: escaped, count: 0 };
+    const re = new RegExp(words.map(escapeRegExp).join('|'), 'gi');
     let count = 0;
     const html = escaped.replace(re, m =>
         `<mark class="hit" data-idx="${count++}">${esc(m)}</mark>`);
@@ -242,11 +265,12 @@ function highlightText(text, keyword) {
 }
 
 /**
- * 对已渲染的 DOM 元素内的文本节点做关键词高亮（不破坏 HTML 标签），返回命中数。
+ * 对已渲染的 DOM 元素内的文本节点做多关键词高亮（不破坏 HTML 标签），返回命中数。
  */
-function highlightInElement(root, keyword) {
-    if (!keyword) return 0;
-    const re = new RegExp(escapeRegExp(keyword), 'gi');
+function highlightInElement(root, keywords) {
+    const words = (keywords || []).filter(Boolean);
+    if (words.length === 0) return 0;
+    const re = new RegExp(words.map(escapeRegExp).join('|'), 'gi');
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
     const nodes = [];
     let n;
@@ -278,39 +302,67 @@ function highlightInElement(root, keyword) {
 }
 
 /**
- * 构建匹配位置导航条，点击按钮滚动到对应命中处。
+ * 构建匹配位置导航条：上一个 / 下一个按钮 + 以匹配内容为文字的按钮，点击滚动到对应命中处。
  */
 function buildMatchNav(count, scrollContainer) {
     if (count <= 0) return null;
+    let currentIdx = -1;
+
     const nav = document.createElement('div');
     nav.className = 'match-nav';
+
     const label = document.createElement('span');
     label.className = 'match-count';
     label.textContent = `匹配 ${count} 处`;
     nav.appendChild(label);
-    for (let i = 0; i < count; i++) {
+
+    const btnPrev = document.createElement('button');
+    btnPrev.className = 'match-btn match-nav-btn';
+    btnPrev.type = 'button';
+    btnPrev.textContent = '◀ 上一个';
+    btnPrev.addEventListener('click', () =>
+        goTo(currentIdx <= 0 ? count - 1 : currentIdx - 1));
+
+    const btnNext = document.createElement('button');
+    btnNext.className = 'match-btn match-nav-btn';
+    btnNext.type = 'button';
+    btnNext.textContent = '下一个 ▶';
+    btnNext.addEventListener('click', () =>
+        goTo(currentIdx < 0 ? 0 : (currentIdx + 1) % count));
+
+    nav.append(btnPrev, btnNext);
+
+    // 以每个命中的实际文本作为按钮文字（截断显示，完整内容放 tooltip）
+    const hits = scrollContainer.querySelectorAll('mark.hit');
+    hits.forEach((hit, i) => {
+        const full = hit.textContent;
+        const shown = full.replace(/\s+/g, ' ').trim();
         const btn = document.createElement('button');
-        btn.className = 'match-btn';
+        btn.className = 'match-btn match-content-btn';
         btn.type = 'button';
-        btn.textContent = String(i + 1);
-        btn.addEventListener('click', () => {
-            const target = scrollContainer.querySelector(`mark.hit[data-idx="${i}"]`);
-            if (!target) return;
-            scrollContainer.querySelectorAll('mark.hit').forEach(m => m.classList.remove('current'));
-            target.classList.add('current');
-            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        });
+        btn.title = full;
+        btn.textContent = shown.length > 24 ? shown.slice(0, 24) + '…' : shown;
+        btn.addEventListener('click', () => goTo(i));
         nav.appendChild(btn);
+    });
+
+    function goTo(i) {
+        currentIdx = i;
+        const target = scrollContainer.querySelector(`mark.hit[data-idx="${i}"]`);
+        if (!target) return;
+        scrollContainer.querySelectorAll('mark.hit').forEach(m => m.classList.remove('current'));
+        target.classList.add('current');
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
+
     return nav;
 }
 
 /* Markdown 预览：支持「渲染 / 源码」切换，渲染模式用 marked + highlight.js */
-function openMarkdownPreview(item, body, keyword) {
+function openMarkdownPreview(item, body, matchWords) {
     let rawText = '';
     let truncated = false;
     let mode = 'rendered'; // 'rendered' | 'source'
-    const kw = (keyword || '').trim();
 
     const toolbar = document.createElement('div');
     toolbar.className = 'preview-toolbar';
@@ -355,7 +407,7 @@ function openMarkdownPreview(item, body, keyword) {
             contentEl = pre;
         }
         // 关键词高亮 + 匹配位置导航
-        const count = highlightInElement(contentEl, kw);
+        const count = highlightInElement(contentEl, matchWords);
         const nav = buildMatchNav(count, body);
         if (nav) {
             body.insertBefore(nav, contentEl);
